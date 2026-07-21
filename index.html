@@ -664,7 +664,7 @@ input[type="range"].std-slider::-webkit-slider-thumb{
   background: var(--bg);
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   gap: 22px;
-  transition: opacity .5s ease, visibility .5s ease;
+  transition: opacity .4s ease .05s, visibility .4s ease .05s;
 }
 #splash.hide{ opacity:0; visibility:hidden; pointer-events:none; }
 #splash .splash-glow{
@@ -672,15 +672,32 @@ input[type="range"].std-slider::-webkit-slider-thumb{
   background: var(--brand-gradient-soft);
   opacity:0.7;
   filter: blur(80px);
+  transition: opacity .3s ease;
 }
+#splash.flying .splash-glow{ opacity:0; }
+
+/* El logo vive dentro del splash mientras aparece, pero cuando empieza
+   a "volar" hacia la cabecera pasa a position:fixed con coordenadas propias,
+   independiente del resto del splash (que se desvanece por su lado). */
 #splash .splash-logo-wrap{
   position:relative;
   width: 116px; height:116px;
   animation: splash-pop .7s cubic-bezier(.25,.8,.35,1);
+  transition: transform .55s cubic-bezier(.4,0,.2,1), width .55s cubic-bezier(.4,0,.2,1), height .55s cubic-bezier(.4,0,.2,1), border-radius .55s ease;
 }
 #splash .splash-logo-wrap img{
   width:100%; height:100%; border-radius: 26px;
   box-shadow: var(--shadow-lift);
+  transition: border-radius .55s ease, box-shadow .55s ease;
+}
+#splash.flying .splash-logo-wrap{
+  position: fixed;
+  z-index: 1001;
+  border-radius: 8px;
+}
+#splash.flying .splash-logo-wrap img{
+  border-radius: 8px;
+  box-shadow: none;
 }
 #splash .splash-name{
   position:relative;
@@ -689,6 +706,7 @@ input[type="range"].std-slider::-webkit-slider-thumb{
   font-size: 26px;
   letter-spacing: -0.02em;
   animation: splash-fade .6s ease .15s both;
+  transition: opacity .25s ease;
 }
 #splash .splash-tagline{
   position:relative;
@@ -697,12 +715,19 @@ input[type="range"].std-slider::-webkit-slider-thumb{
   letter-spacing: 0.08em;
   text-transform: uppercase;
   animation: splash-fade .6s ease .3s both;
+  transition: opacity .25s ease;
 }
 #splash .splash-dots{
   position:relative;
   display:flex; gap:6px;
   margin-top: 6px;
   animation: splash-fade .6s ease .45s both;
+  transition: opacity .25s ease;
+}
+#splash.flying .splash-name,
+#splash.flying .splash-tagline,
+#splash.flying .splash-dots{
+  opacity: 0;
 }
 #splash .splash-dots span{
   width:6px; height:6px; border-radius:50%;
@@ -727,6 +752,8 @@ input[type="range"].std-slider::-webkit-slider-thumb{
 }
 @media (prefers-reduced-motion: reduce){
   #splash .splash-logo-wrap, #splash .splash-name, #splash .splash-tagline, #splash .splash-dots{ animation: none; }
+  #splash .splash-logo-wrap{ transition: opacity .3s ease !important; }
+  #splash.flying .splash-logo-wrap{ opacity: 0; }
 }
 
 .hidden{ display:none !important; }

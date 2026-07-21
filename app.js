@@ -1773,23 +1773,79 @@ async function initApp() {
   hideSplash(splashStart);
 }
 
-/* Splash propio: se muestra un mínimo de 500ms para evitar parpadeos,
-   y como máximo 4s por si algo se retrasa. */
+/* Splash propio: se muestra un mínimo de 2s para que la marca respire,
+   y como máximo 5s por si algo se retrasa. Al terminar, el logo "vuela"
+   (técnica FLIP) desde el centro del splash hasta su sitio en la cabecera
+   de Inicio, y el resto del splash (texto, puntos) se desvanece a la vez. */
 function hideSplash(startedAt) {
   const splashEl = document.getElementById('splash');
   if (!splashEl) return;
   const elapsed = Date.now() - startedAt;
-  const minVisible = 500;
+  const minVisible = 2000;
   const wait = Math.max(0, minVisible - elapsed);
-  setTimeout(() => splashEl.classList.add('hide'), wait);
+  setTimeout(() => flySplashLogoToHeader(splashEl), wait);
+}
+
+function flySplashLogoToHeader(splashEl) {
+  const logoWrap = splashEl.querySelector('.splash-logo-wrap');
+  const target = document.querySelector('.brand img');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const finish = () => {
+    splashEl.classList.add('hide');
+    setTimeout(() => splashEl.remove(), 450);
+  };
+
+  if (!logoWrap || !target || reduceMotion) {
+    finish();
+    return;
+  }
+
+  // 1. FIRST: posición y tamaño actuales del logo dentro del flujo del splash.
+  const startRect = logoWrap.getBoundingClientRect();
+
+  // 2. Sacar el logo del flujo normal y fijarlo con coordenadas absolutas,
+  //    exactamente donde ya estaba, para poder animarlo con position:fixed.
+  logoWrap.style.left = startRect.left + 'px';
+  logoWrap.style.top = startRect.top + 'px';
+  logoWrap.style.width = startRect.width + 'px';
+  logoWrap.style.height = startRect.height + 'px';
+  logoWrap.style.margin = '0';
+  splashEl.classList.add('flying');
+
+  requestAnimationFrame(() => {
+    // 3. LAST: posición y tamaño reales del logo pequeño de la cabecera.
+    const endRect = target.getBoundingClientRect();
+
+    // 4. PLAY: transicionamos hacia las coordenadas/tamaño de destino;
+    //    las transitions ya declaradas en CSS para .splash-logo-wrap
+    //    (top/left via transform, width, height, border-radius) hacen el resto.
+    const deltaX = endRect.left - startRect.left;
+    const deltaY = endRect.top - startRect.top;
+    logoWrap.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+    logoWrap.style.width = endRect.width + 'px';
+    logoWrap.style.height = endRect.height + 'px';
+  });
+
+  // 5. Al terminar la transición del logo, ocultamos el splash entero.
+  let done = false;
+  const onEnd = (e) => {
+    if (e.propertyName !== 'transform' || done) return;
+    done = true;
+    logoWrap.removeEventListener('transitionend', onEnd);
+    finish();
+  };
+  logoWrap.addEventListener('transitionend', onEnd);
+  // Salvaguarda por si transitionend no dispara (p.ej. pestaña en segundo plano).
+  setTimeout(() => { if (!done) { done = true; finish(); } }, 750);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   // Salvaguarda: si algo falla en initApp, no dejar el splash bloqueado para siempre.
   const failSafe = setTimeout(() => {
     const splashEl = document.getElementById('splash');
-    if (splashEl) splashEl.classList.add('hide');
-  }, 4000);
+    if (splashEl) { splashEl.classList.add('hide'); setTimeout(() => splashEl.remove(), 450); }
+  }, 6000);
 
   initApp().finally(() => clearTimeout(failSafe));
 });
