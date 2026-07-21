@@ -1764,13 +1764,85 @@ async function initApp() {
   await Bejherro.library.loadAllTracksFromDB();
   await Bejherro.playlists.loadPlaylistsAndFavorites();
 
+  // Si ya hay pistas guardadas de sesiones anteriores, las mostramos YA
+  // (no hace falta esperar al reescaneo para que la app se sienta rápida).
   const restored = await Bejherro.player.restorePlaybackState();
   if (restored) updateMiniPlayerVisibility();
-
   renderScreen();
   handleShortcutAction();
-
   hideSplash(splashStart);
+
+  // En segundo plano, reescaneamos las carpetas guardadas para detectar
+  // canciones nuevas/eliminadas. Si Chrome revocó el permiso de lectura
+  // (ocurre tras cerrar todas las pestañas: es una restricción del propio
+  // navegador, no algo que la app pueda evitar), lo detectamos y avisamos
+  // con un botón para reconceder el acceso en un solo toque.
+  syncFoldersOnStartup();
+}
+
+async function syncFoldersOnStartup() {
+  const folders = await Bejherro.db.idbGetAll('folderHandles');
+  if (folders.length === 0) return;
+
+  let needsPermission = false;
+  for (const f of folders) {
+    try {
+      const perm = await f.handle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') { needsPermission = true; break; }
+    } catch (e) {
+      needsPermission = true;
+      break;
+    }
+  }
+
+  if (needsPermission) {
+    showFolderPermissionToast(folders.length);
+    return;
+  }
+
+  // Permisos ya concedidos: reescaneamos silenciosamente sin interrumpir.
+  try {
+    await Bejherro.library.reindexAllFolders();
+    if (['home', 'library', 'search', 'playlists'].includes(state.currentScreen)) renderScreen();
+  } catch (err) {
+    console.warn('Reescaneo silencioso fallido:', err);
+  }
+}
+
+function showFolderPermissionToast(folderCount) {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.style.pointerEvents = 'auto';
+  el.style.cursor = 'pointer';
+  el.innerHTML = `<span>Confirma el acceso a tus ${folderCount} carpeta${folderCount > 1 ? 's' : ''} de música</span>`;
+  el.addEventListener('click', async () => {
+    el.remove();
+    const progressOverlay = document.createElement('div');
+    progressOverlay.className = 'modal-overlay open';
+    progressOverlay.innerHTML = `
+      <div class="modal-box" style="text-align:center;">
+        <h3>Reconectando carpetas…</h3>
+        <div class="loading-spinner"></div>
+        <p id="progress-detail">Preparando…</p>
+      </div>`;
+    document.body.appendChild(progressOverlay);
+    try {
+      await Bejherro.library.reindexAllFolders(({ current, name }) => {
+        progressOverlay.querySelector('#progress-detail').textContent = `${current} · ${name}`;
+      });
+      progressOverlay.remove();
+      Bejherro.utils.toast('Biblioteca actualizada', 'success');
+      renderScreen();
+    } catch (err) {
+      progressOverlay.remove();
+      console.error(err);
+      Bejherro.utils.toast('No se pudo reconectar alguna carpeta', 'error');
+    }
+  });
+  container.appendChild(el);
+  // Este toast no desaparece solo: necesita el toque del usuario para
+  // disparar el permiso del navegador (no se puede pedir sin gesto directo).
 }
 
 /* Splash propio: se muestra un mínimo de 2s para que la marca respire,
