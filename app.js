@@ -455,7 +455,15 @@ async function playTrackById(trackId, queueContext = null) {
   }
 
   state.currentTrack = track;
-  await loadTrackIntoAudio(track, true);
+
+  try {
+    await loadTrackIntoAudio(track, true);
+  } catch (err) {
+    console.warn('No se pudo reproducir el archivo (¿permiso de carpeta revocado?):', err);
+    Bejherro.utils.toast('No se puede acceder a esta canción. Reconecta la carpeta desde Ajustes.', 'error');
+    emit('trackchange', track);
+    return;
+  }
 
   track.playCount = (track.playCount || 0) + 1;
   track.lastPlayed = Date.now();
@@ -608,7 +616,19 @@ async function restorePlaybackState() {
   state.volume = saved.volume ?? 1;
   state.currentTrack = track;
 
-  await loadTrackIntoAudio(track, false);
+  try {
+    await loadTrackIntoAudio(track, false);
+  } catch (err) {
+    // El archivo puede no ser accesible todavía (Chrome revoca el permiso
+    // de lectura de la carpeta al cerrar todas las pestañas). No es un error
+    // fatal: dejamos la pista "seleccionada" en la UI, y sonará en cuanto
+    // el usuario reconceda el acceso a la carpeta (aviso que ya se muestra
+    // aparte) o pulse play.
+    console.warn('No se pudo cargar el audio al reanudar (¿permiso de carpeta revocado?):', err);
+    state.isPlaying = false;
+    return true;
+  }
+
   audioEl.currentTime = saved.currentTime || 0;
   audioEl.playbackRate = state.playbackRate;
   audioEl.volume = state.volume;
@@ -1757,27 +1777,67 @@ function handleShortcutAction() {
 --------------------------------------------------------- */
 async function initApp() {
   const splashStart = Date.now();
-  registerServiceWorker();
-  wirePlayerControls();
-  wireBottomNav();
+  try {
+    registerServiceWorker();
+    wirePlayerControls();
+    wireBottomNav();
 
-  await Bejherro.library.loadAllTracksFromDB();
-  await Bejherro.playlists.loadPlaylistsAndFavorites();
+    await Bejherro.library.loadAllTracksFromDB();
+    await Bejherro.playlists.loadPlaylistsAndFavorites();
 
-  // Si ya hay pistas guardadas de sesiones anteriores, las mostramos YA
-  // (no hace falta esperar al reescaneo para que la app se sienta rápida).
-  const restored = await Bejherro.player.restorePlaybackState();
-  if (restored) updateMiniPlayerVisibility();
-  renderScreen();
-  handleShortcutAction();
-  hideSplash(splashStart);
+    // Si ya hay pistas guardadas de sesiones anteriores, las mostramos YA
+    // (no hace falta esperar al reescaneo para que la app se sienta rápida).
+    const restored = await Bejherro.player.restorePlaybackState();
+    if (restored) updateMiniPlayerVisibility();
+    renderScreen();
+    handleShortcutAction();
+    hideSplash(splashStart);
 
-  // En segundo plano, reescaneamos las carpetas guardadas para detectar
-  // canciones nuevas/eliminadas. Si Chrome revocó el permiso de lectura
-  // (ocurre tras cerrar todas las pestañas: es una restricción del propio
-  // navegador, no algo que la app pueda evitar), lo detectamos y avisamos
-  // con un botón para reconceder el acceso en un solo toque.
-  syncFoldersOnStartup();
+    // En segundo plano, reescaneamos las carpetas guardadas para detectar
+    // canciones nuevas/eliminadas. Si Chrome revocó el permiso de lectura
+    // (ocurre tras cerrar todas las pestañas: es una restricción del propio
+    // navegador, no algo que la app pueda evitar), lo detectamos y avisamos
+    // con un botón para reconceder el acceso en un solo toque.
+    syncFoldersOnStartup();
+  } catch (err) {
+    // Red de seguridad: si algo inesperado revienta durante el arranque,
+    // NUNCA dejamos el splash colgado. Mostramos el error en pantalla para
+    // poder diagnosticarlo sin necesitar herramientas de desarrollador.
+    console.error('Error fatal en initApp:', err);
+    hideSplash(splashStart);
+    showFatalErrorScreen(err);
+  }
+}
+
+function showFatalErrorScreen(err) {
+  const splashEl = document.getElementById('splash');
+  if (splashEl) { splashEl.classList.add('hide'); setTimeout(() => splashEl.remove(), 450); }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <h3>Bejherro no ha podido arrancar</h3>
+      <p>Ha ocurrido un error al iniciar la app. Copia este mensaje y compártelo para poder solucionarlo:</p>
+      <textarea readonly style="width:100%;min-height:90px;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);border-radius:10px;padding:10px;font-size:12px;font-family:monospace;margin-bottom:14px;">${Bejherro.utils.escapeHtml(err && err.stack ? err.stack : String(err))}</textarea>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="fatal-reload" type="button">Reintentar</button>
+        <button class="btn-brand" id="fatal-reset" type="button">Borrar datos y reiniciar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#fatal-reload').addEventListener('click', () => window.location.reload());
+  overlay.querySelector('#fatal-reset').addEventListener('click', async () => {
+    try {
+      const dbs = await indexedDB.databases();
+      for (const d of dbs) indexedDB.deleteDatabase(d.name);
+    } catch (e) { /* algunos navegadores no soportan databases(), seguimos igualmente */ }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+    window.location.reload();
+  });
 }
 
 async function syncFoldersOnStartup() {
